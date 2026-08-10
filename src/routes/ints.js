@@ -101,6 +101,11 @@ async function fetchTradosToken(service) {
   return { json, status: resp.status };
 }
 
+/**
+ * Exchanges Lionbridge client credentials for an OAuth2 access token.
+ * @param {Object} service - Resolved env credentials (clientId, clientSecret, authEndpoint)
+ * @returns {Promise<Object>} `{ json, status }` on success, or `{ error, status }` on failure
+ */
 async function fetchLionbridgeToken(service) {
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
@@ -130,6 +135,15 @@ function handleError({ error, status }) {
   return new Response(JSON.stringify(error), { status, headers: DEF_HEADERS });
 }
 
+/**
+ * Resolves the client credentials for a service/env by fetching the site's
+ * translate config and, if configured, a referenced service key document.
+ * @param {string} org - DA org name
+ * @param {string} site - DA site name
+ * @param {string} authorization - Authorization header value for the DA admin API
+ * @param {string} serviceEnv - Environment key to resolve credentials for (e.g. 'prod')
+ * @returns {Promise<Object>} `{ json: envCreds }` on success, or `{ error, status }` on failure
+ */
 async function fetchEnvCreds(org, site, authorization, serviceEnv) {
   const cfgResult = await fetchTranslateConfig(org, site, authorization);
   if (cfgResult.error) {
