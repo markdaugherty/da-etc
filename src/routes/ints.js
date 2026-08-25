@@ -126,9 +126,48 @@ async function fetchLionbridgeToken(service) {
   return { json, status: resp.status };
 }
 
+/**
+ * Exchanges GlobalLink client credentials and a user's password for an OAuth2 access
+ * token (resource-owner password grant, Basic-auth'd with the client id/secret). Unlike
+ * Trados/Lionbridge's client_credentials grant, GlobalLink also requires a per-user
+ * username/password, so those must be resolved alongside clientId/clientSecret.
+ * @param {Object} service - Resolved env credentials (clientId, clientSecret, endpoint,
+ * username, password)
+ * @returns {Promise<Object>} `{ json, status }` on success, or `{ error, status }` on failure
+ */
+async function fetchGlobalLinkToken(service) {
+  const {
+    clientId, clientSecret, endpoint, username, password,
+  } = service;
+  if (!endpoint || !username || !password) {
+    return { error: 'Missing GlobalLink endpoint/username/password.', status: 400 };
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'password',
+    username,
+    password,
+  });
+  const opts = {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  };
+  const resp = await fetch(`${endpoint}/oauth/token`, opts);
+  if (!resp.ok) {
+    return { error: 'Could not get token', status: resp.status };
+  }
+  const json = await resp.json();
+  return { json, status: resp.status };
+}
+
 const TOKEN_FETCHERS = {
   trados: fetchTradosToken,
   lionbridge: fetchLionbridgeToken,
+  globallink: fetchGlobalLinkToken,
 };
 
 function handleError({ error, status }) {

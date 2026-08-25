@@ -2,8 +2,8 @@
 
 A small Cloudflare Worker that hosts a handful of miscellaneous HTTP endpoints
 used by Adobe Document Authoring (DA) / AEM Edge Delivery tooling: a CORS
-proxy, an AI-powered tag extractor, and a Trados translation integration
-login endpoint.
+proxy, an AI-powered tag extractor, and translation-integration login
+endpoints (Trados, Lionbridge, GlobalLink).
 
 ## Endpoints
 
@@ -40,23 +40,30 @@ Requires the `OPENAI_API_KEY` binding/secret.
 
 ### `POST /:org/config/:site/integrations/:service/:action`
 
-Server-side integration helper. Currently supports `login` for two services:
+Server-side integration helper. Currently supports `login` for three services:
 
 ```
 POST /:org/config/:site/integrations/trados/login?env=prod
 POST /:org/config/:site/integrations/lionbridge/login?env=prod
+POST /:org/config/:site/integrations/globallink/login?env=prod
 ```
 
 Given an `Authorization` header for the DA admin API, this:
 1. Fetches the site's translation service config from
    `https://admin.da.live/source/:org/:site/.da/translate.json`.
 2. Optionally fetches a service key document referenced by that config.
-3. Exchanges the resolved client credentials for an OAuth token via
-   `client_credentials` grant, using the token fetcher for the requested
-   service (`TOKEN_FETCHERS` in `src/routes/ints.js`).
+3. Exchanges the resolved client credentials for an OAuth token, using the
+   token fetcher for the requested service (`TOKEN_FETCHERS` in
+   `src/routes/ints.js`). Trados and Lionbridge use a `client_credentials`
+   grant; GlobalLink uses a resource-owner `password` grant (client
+   id/secret via Basic auth, plus a per-user username/password resolved
+   from the same config).
 
 Returns the token response, or an error/status code if any upstream
-step fails.
+step fails. This keeps OAuth client secrets (and, for GlobalLink, the
+user's password) out of the browser entirely — the client only ever
+calls this endpoint with its own DA session auth, never the third-party
+service's credentials.
 
 ## Architecture
 
@@ -70,7 +77,7 @@ src/
   routes/
     cors.js           CORS proxy implementation
     tags.js           Tag extraction route
-    ints.js           Third-party integration routes (Trados, Lionbridge)
+    ints.js           Third-party integration routes (Trados, Lionbridge, GlobalLink)
   utils/
     constants.js      Default response headers, allowed CORS origins
     html.js           HTML → plain text cleanup
