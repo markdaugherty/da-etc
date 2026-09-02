@@ -101,8 +101,76 @@ async function fetchTradosToken(service) {
   return { json, status: resp.status };
 }
 
+/**
+ * Exchanges Lionbridge client credentials for an OAuth2 access token.
+ * @param {Object} service - Resolved env credentials (clientId, clientSecret, authEndpoint)
+ * @returns {Promise<Object>} `{ json, status }` on success, or `{ error, status }` on failure
+ */
+async function fetchLionbridgeToken(service) {
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: service.clientId,
+    client_secret: service.clientSecret,
+  });
+
+  const opts = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  };
+  const resp = await fetch(service.authEndpoint, opts);
+  if (!resp.ok) {
+    return { error: 'Could not get token', status: resp.status };
+  }
+  const json = await resp.json();
+  return { json, status: resp.status };
+}
+
+const TOKEN_FETCHERS = {
+  trados: fetchTradosToken,
+  lionbridge: fetchLionbridgeToken,
+};
+
 function handleError({ error, status }) {
   return new Response(JSON.stringify(error), { status, headers: DEF_HEADERS });
+}
+
+/**
+ * Resolves the client credentials for a service/env by fetching the site's
+ * translate config and, if configured, a referenced service key document.
+ * @param {string} org - DA org name
+ * @param {string} site - DA site name
+ * @param {string} authorization - Authorization header value for the DA admin API
+ * @param {string} serviceEnv - Environment key to resolve credentials for (e.g. 'prod')
+ * @returns {Promise<Object>} `{ json: envCreds }` on success, or `{ error, status }` on failure
+ */
+async function fetchEnvCreds(org, site, authorization, serviceEnv) {
+  const cfgResult = await fetchTranslateConfig(org, site, authorization);
+  if (cfgResult.error) {
+    return cfgResult;
+  }
+
+  const svcCfg = formatConfig(cfgResult.json);
+
+  console.log('intRoute: svcCfg', { name: svcCfg.name, keyPath: svcCfg.keyPath, envs: Object.keys(svcCfg.envs) });
+
+  let envCreds = svcCfg.envs[serviceEnv] ?? {};
+  if (svcCfg.keyPath) {
+    const keyResult = await fetchServiceKey(svcCfg.keyPath, authorization);
+    if (keyResult.error) {
+      return keyResult;
+    }
+    const keyEnvs = formatServiceKey(keyResult.json);
+    envCreds = { ...envCreds, ...(keyEnvs[serviceEnv] ?? {}) };
+  }
+
+  console.log('intRoute: envCreds for', serviceEnv, envCreds ? Object.keys(envCreds) : '<none>');
+
+  if (!envCreds?.clientSecret) {
+    return { error: `Missing credentials for env '${serviceEnv}'.`, status: 400 };
+  }
+
+  return { json: envCreds };
 }
 
 export default async function intRoute({
@@ -119,33 +187,15 @@ export default async function intRoute({
     });
   }
 
-  if (service === 'trados' && action === 'login') {
-    const cfgResult = await fetchTranslateConfig(org, site, authorization);
-    if (cfgResult.error) {
-      return handleError(cfgResult);
+  const fetchToken = TOKEN_FETCHERS[service];
+
+  if (fetchToken && action === 'login') {
+    const credsResult = await fetchEnvCreds(org, site, authorization, serviceEnv);
+    if (credsResult.error) {
+      return handleError(credsResult);
     }
 
-    const svcCfg = formatConfig(cfgResult.json);
-
-    console.log('intRoute: svcCfg', { name: svcCfg.name, keyPath: svcCfg.keyPath, envs: Object.keys(svcCfg.envs) });
-
-    let envCreds = svcCfg.envs[serviceEnv] ?? {};
-    if (svcCfg.keyPath) {
-      const keyResult = await fetchServiceKey(svcCfg.keyPath, authorization);
-      if (keyResult.error) {
-        return handleError(keyResult);
-      }
-      const keyEnvs = formatServiceKey(keyResult.json);
-      envCreds = { ...envCreds, ...(keyEnvs[serviceEnv] ?? {}) };
-    }
-
-    console.log('intRoute: envCreds for', serviceEnv, envCreds ? Object.keys(envCreds) : '<none>');
-
-    if (!envCreds?.clientSecret) {
-      return handleError({ error: `Missing credentials for env '${serviceEnv}'.`, status: 400 });
-    }
-
-    const tokenResult = await fetchTradosToken(envCreds);
+    const tokenResult = await fetchToken(credsResult.json);
     if (tokenResult.error) {
       return handleError(tokenResult);
     }
