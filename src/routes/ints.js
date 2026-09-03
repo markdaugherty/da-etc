@@ -126,9 +126,35 @@ async function fetchLionbridgeToken(service) {
   return { json, status: resp.status };
 }
 
+/**
+ * Exchanges a Smartling userIdentifier/userSecret pair for an access/refresh
+ * token pair. Unlike the OAuth2 client_credentials flow used by Trados and
+ * Lionbridge, Smartling has its own token endpoint and response shape
+ * (`{ response: { data: { accessToken, refreshToken, expiresIn } } }`), so
+ * the raw response is passed through unchanged rather than reshaped.
+ * @param {Object} service - Resolved env credentials (userIdentifier, userSecret, authEndpoint)
+ * @returns {Promise<Object>} `{ json, status }` on success, or `{ error, status }` on failure
+ */
+async function fetchSmartlingToken(service) {
+  const { userIdentifier, userSecret, authEndpoint } = service;
+  if (!authEndpoint || !userIdentifier || !userSecret) {
+    return { error: 'Missing Smartling authEndpoint/userIdentifier/userSecret.', status: 400 };
+  }
+
+  const body = JSON.stringify({ userIdentifier, userSecret });
+  const opts = { ...BASE_OPTS, body };
+  const resp = await fetch(`${authEndpoint}/auth-api/v2/authenticate`, opts);
+  if (!resp.ok) {
+    return { error: 'Could not get token', status: resp.status };
+  }
+  const json = await resp.json();
+  return { json, status: resp.status };
+}
+
 const TOKEN_FETCHERS = {
   trados: fetchTradosToken,
   lionbridge: fetchLionbridgeToken,
+  smartling: fetchSmartlingToken,
 };
 
 function handleError({ error, status }) {
@@ -166,7 +192,7 @@ async function fetchEnvCreds(org, site, authorization, serviceEnv) {
 
   console.log('intRoute: envCreds for', serviceEnv, envCreds ? Object.keys(envCreds) : '<none>');
 
-  if (!envCreds?.clientSecret) {
+  if (!envCreds?.clientSecret && !envCreds?.userSecret) {
     return { error: `Missing credentials for env '${serviceEnv}'.`, status: 400 };
   }
 
